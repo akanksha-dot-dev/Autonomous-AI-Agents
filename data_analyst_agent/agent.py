@@ -7,6 +7,7 @@ from .tools import (
     compare_segments,
     get_data_quality_report,
     generate_insights,
+    identify_key_drivers,
 )
 
 # Sub-agent for web research with specialized instructions
@@ -63,5 +64,6 @@ root_agent = Agent(
         detect_anomalies,
         compare_segments,
         get_data_quality_report,
+        identify_key_drivers,
     ],
 )

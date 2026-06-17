@@ -6,6 +6,7 @@ from .tools import (
     compare_segments,
     get_data_quality_report,
     generate_insights,
+    identify_key_drivers,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "compare_segments",
     "get_data_quality_report",
     "generate_insights",
+    "identify_key_drivers",
 ]
