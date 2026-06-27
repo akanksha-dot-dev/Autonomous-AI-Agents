@@ -100,11 +100,13 @@ def analyze_csv(
         }
 
         if "revenue" in df.columns:
-            revenue = df["revenue"].astype(float, errors="ignore")
+            revenue = pd.to_numeric(df["revenue"], errors="coerce")
             summary["total_revenue"] = float(revenue.sum())
             summary["avg_revenue_per_order"] = float(revenue.mean())
             summary["max_order_value"] = float(revenue.max())
             summary["min_order_value"] = float(revenue.min())
+            summary["revenue_valid_rows"] = int(revenue.notna().sum())
+            summary["revenue_missing_rows"] = int(revenue.isna().sum())
 
         if "category" in df.columns and "revenue" in df.columns:
             revenue_by_category = df.groupby("category")["revenue"].sum().sort_values(ascending=False)
@@ -143,6 +145,9 @@ def analyze_csv(
                     {"period": str(index.date()), "revenue": float(value)}
                     for index, value in monthly.items()
                 ]
+                change = monthly.pct_change().dropna()
+                if not change.empty:
+                    summary["revenue_growth_rate_percent"] = round(float(change.iloc[-1] * 100), 2)
 
         summary["top_takeaways"] = []
         if "revenue_by_category" in summary:
@@ -156,131 +161,27 @@ def analyze_csv(
                 f"Top product: {summary['top_products'][0]['product']}"
             )
 
+        summary["recommendations"] = []
+        if duplicate_count > 0:
+            summary["recommendations"].append(
+                "Review and remove duplicate records to ensure reliable aggregate results."
+            )
+        if summary["missing_values"]:
+            summary["recommendations"].append(
+                "Address missing values in key fields to improve data completeness."
+            )
+        if "revenue_growth_rate_percent" in summary:
+            direction = "upward" if summary["revenue_growth_rate_percent"] > 0 else "downward" if summary["revenue_growth_rate_percent"] < 0 else "stable"
+            summary["recommendations"].append(
+                f"Current monthly revenue trend is {direction}."
+            )
+
         return summary
 
     except Exception as e:
         return {"error": str(e), "question": question}
 
 
-def generate_insights(file_path: str, question: str = "") -> Dict[str, Any]:
-    """Automatically generate key insights and findings from data.
-    
-    Args:
-        file_path: Path to the CSV file.
-        question: Optional specific question to focus on.
-        
-    Returns:
-        Dict with automatic insights including trends, patterns, and highlights.
-    """
-    try:
-        df = load_csv(file_path)
-        insights = {
-            "question": question or "General analysis",
-            "data_shape": {"rows": len(df), "columns": len(df.columns)},
-            "findings": [],
-            "warnings": [],
-        }
-
-        quality_report = get_data_quality_report(file_path)
-        if isinstance(quality_report, dict) and quality_report.get("completeness_percentage", 100) < 90:
-            insights["warnings"].append(
-                "Dataset completeness is below 90%; review missing values before drawing firm conclusions."
-            )
-        if isinstance(quality_report, dict) and quality_report.get("duplicate_percentage", 0) > 10:
-            insights["warnings"].append("High duplicate row rate; duplicates may distort aggregate metrics.")
-
-        if "revenue" in df.columns:
-            revenue = pd.to_numeric(df["revenue"], errors="coerce")
-            insights["revenue_stats"] = {
-                "total_revenue": float(revenue.sum()),
-                "avg_order_value": float(revenue.mean()),
-                "revenue_range": {"min": float(revenue.min()), "max": float(revenue.max())},
-            }
-            insights["findings"].append(f"Total revenue is ${insights['revenue_stats']['total_revenue']:,.2f}.")
-            insights["findings"].append(f"Average order value is ${insights['revenue_stats']['avg_order_value']:,.2f}.")
-
-        if "category" in df.columns and "revenue" in df.columns:
-            revenue_by_category = df.groupby("category")["revenue"].sum().sort_values(ascending=False)
-            if not revenue_by_category.empty:
-                top_category = revenue_by_category.index[0]
-                top_revenue = revenue_by_category.iloc[0]
-                insights["findings"].append(
-                    f"Top revenue-generating category: {top_category} with ${top_revenue:,.2f}."
-                )
-
-        if "region" in df.columns and "revenue" in df.columns:
-            revenue_by_region = df.groupby("region")["revenue"].sum().sort_values(ascending=False)
-            if not revenue_by_region.empty:
-                top_region = revenue_by_region.index[0]
-                insights["findings"].append(
-                    f"Top revenue region: {top_region} with ${revenue_by_region.iloc[0]:,.2f}."
-                )
-
-        if "product" in df.columns and "quantity" in df.columns:
-            sales_by_product = df.groupby("product")["quantity"].sum().sort_values(ascending=False)
-            if not sales_by_product.empty:
-                best_seller = sales_by_product.index[0]
-                best_quantity = sales_by_product.iloc[0]
-                insights["findings"].append(
-                    f"Best-selling product: {best_seller} ({int(best_quantity)} units sold)."
-                )
-                insights["top_products"] = [
-                    {"product": idx, "quantity": int(val)}
-                    for idx, val in sales_by_product.head(3).items()
-                ]
-
-        date_column = "date" if "date" in df.columns else detect_date_column(df)
-        if date_column:
-            df[date_column] = pd.to_datetime(df[date_column], errors="coerce")
-            valid_dates = df[date_column].dropna()
-            if len(valid_dates) > 1:
-                date_range = (valid_dates.max() - valid_dates.min()).days
-                insights["findings"].append(f"Data covers {date_range} days.")
-                if "revenue" in df.columns:
-                    trend = (
-                        df.set_index(date_column).resample("M")["revenue"].sum().pct_change().dropna()
-                    )
-                    if not trend.empty:
-                        latest = trend.iloc[-1] * 100
-                        direction = "increasing" if latest > 0 else "decreasing" if latest < 0 else "flat"
-                        insights["findings"].append(
-                            f"Most recent monthly revenue trend is {direction} ({latest:.2f}%)."
-                        )
-
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        if len(numeric_cols) > 1:
-            corr_matrix = df[numeric_cols].corr().abs()
-            pairs = (
-                corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-                .stack()
-                .sort_values(ascending=False)
-            )
-            if not pairs.empty:
-                strongest = pairs.head(3)
-                insights["top_correlations"] = [
-                    {"pair": f"{idx[0]} & {idx[1]}", "correlation": round(float(value), 4)}
-                    for idx, value in strongest.items()
-                ]
-                for idx, value in strongest.items():
-                    insights["findings"].append(
-                        f"Strong relationship between {idx[0]} and {idx[1]} (correlation {value:.2f})."
-                    )
-
-        if "revenue" in df.columns and "product" in df.columns:
-            revenue_by_product = df.groupby("product")["revenue"].sum().sort_values(ascending=False)
-            if len(revenue_by_product) > 1:
-                top_share = revenue_by_product.head(1).sum() / revenue_by_product.sum() * 100
-                insights["findings"].append(
-                    f"Top product contributes {top_share:.2f}% of total revenue."
-                )
-
-        if not insights["findings"]:
-            insights["findings"].append("No strong insights could be generated from the current dataset structure.")
-
-        return insights
-
-    except Exception as e:
-        return {"error": str(e), "question": question}
 
 
 def identify_key_drivers(file_path: str, target_column: str, top_n: int = 3) -> Dict[str, Any]:
@@ -494,9 +395,28 @@ def detect_anomalies(
             anomalies = z_scores > threshold
             result["mean"] = round(mean, 4)
             result["std_dev"] = round(std, 4)
+            result["detection_methods"] = ["zscore"]
+
+        elif method == "both":
+            q1 = valid_data.quantile(0.25)
+            q3 = valid_data.quantile(0.75)
+            iqr = q3 - q1
+            lower_bound = q1 - (threshold * iqr)
+            upper_bound = q3 + (threshold * iqr)
+            mean = valid_data.mean()
+            std = valid_data.std()
+            if std == 0:
+                raise ValueError("Combined anomaly detection requires variation in the data")
+            z_scores = (valid_data - mean).abs() / std
+            anomalies = ((valid_data < lower_bound) | (valid_data > upper_bound)) | (z_scores > threshold)
+            result["lower_bound"] = round(lower_bound, 4)
+            result["upper_bound"] = round(upper_bound, 4)
+            result["mean"] = round(mean, 4)
+            result["std_dev"] = round(std, 4)
+            result["detection_methods"] = ["iqr", "zscore"]
 
         else:
-            raise ValueError(f"Unknown method: {method}. Use 'iqr' or 'zscore'")
+            raise ValueError(f"Unknown method: {method}. Use 'iqr', 'zscore', or 'both'")
 
         anomaly_indices = anomalies[anomalies].index.tolist()
         result["anomalies_detected"] = len(anomaly_indices)
