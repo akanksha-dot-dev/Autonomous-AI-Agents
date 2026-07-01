@@ -27,4 +27,7 @@ def test_generate_comprehensive_report_returns_structured_summary(tmp_path):
     assert "segment_comparisons" in report
     assert "anomaly_detection" in report
     assert "key_drivers" in report
+    assert "recommendations" in report
+    assert isinstance(report["recommendations"], list)
+    assert report["recommendations"]
     assert report["quality_grade"] in {"Excellent", "Good", "Fair", "Poor"}
